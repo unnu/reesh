@@ -1,0 +1,93 @@
+#!/usr/bin/env ruby
+
+require "rubygems"
+require "bundler/setup"
+
+require "twitter"
+require "trollop"
+require "active_support/all"
+require "rainbow"
+require 'htmlentities'
+
+SUB_COMMANDS = %w(t tweet s show)
+global_opts = Trollop::options do
+  version "reesh 0.0.1 (c) 2011 Norman Timmler"
+  banner <<-EOS
+Twitter for command line.
+
+Usage:
+      reesh <command> [options]
+where commands are:
+      last (default)
+      tweet
+where [options] are:
+  EOS
+  stop_on SUB_COMMANDS
+end
+
+data = {}
+cmd = ARGV.shift || "show" # get the subcommand
+cmd_opts = case cmd
+  when "tweet", "t"
+    cmd = "tweet"
+    data[:text] = ARGV.shift # get tweet text
+    Trollop::options do
+    end
+  when "show", "s"
+    cmd = "show"
+    Trollop::options do
+      opt :force, "Force reload"
+    end
+  else
+    Trollop::die "unknown subcommand #{cmd.inspect}"
+end
+
+
+
+Twitter.configure do |config|
+  config.consumer_key = ENV['REESH_CONSUMER_KEY']
+  config.consumer_secret = ENV['REESH_CONSUMER_SECRET']
+  config.oauth_token = ENV['REESH_OAUTH_TOKEN']
+  config.oauth_token_secret = ENV['REESH_OAUTH_TOKEN_SECRET']
+end
+
+module Reesh
+  class Show
+    def execute(opts, data)
+      timeline = Twitter.home_timeline(:since_id => (opts[:force] ? -1 : read_since_id))
+      save_since_id(timeline.first.try(:id))
+      timeline.each do |tweet|
+        puts "#{('@' + tweet.user.screen_name).rjust(20).foreground(:green)} #{HTMLEntities.new.decode(highlight_mentions(tweet.text))}"
+      end
+    end
+    
+    def highlight_mentions(text)
+      text.gsub(/(@.+?)(?=\s)/) do |mention|
+        mention.foreground(:magenta)
+      end
+    end
+    
+    def save_since_id(id)
+      return unless id
+      
+      Dir.mkdir(reesh_dir) unless File.exist?(reesh_dir)
+      File.open("#{reesh_dir}/home_timeline", 'w') { |f| f.puts(id) }
+    end
+    
+    def read_since_id
+      IO.read("#{reesh_dir}/home_timeline").to_i rescue -1
+    end
+    
+    def reesh_dir
+      "#{ENV['HOME']}/.reesh"
+    end
+  end
+  
+  class Tweet
+    def execute(opts, data)
+      Twitter.update(data[:text])
+    end
+  end
+end
+
+"Reesh::#{cmd.classify}".constantize.new.execute(cmd_opts, data)
